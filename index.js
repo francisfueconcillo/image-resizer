@@ -49,3 +49,14 @@ subscription.on('message', async (message) => {
     console.error('❌ Error processing message:', err);
   }
 });
+
+
+// Adding a route so it can be run as a web service
+const express = require('express');
+const app = express();
+
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Image resizer worker is running!'));
+app.listen(PORT, () => {
+  console.log(`Web server listening on port ${PORT}`);
+});

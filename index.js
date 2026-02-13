@@ -1,13 +1,15 @@
 require('dotenv').config();
-const { Storage } = require('@google-cloud/storage');
 const { PubSub } = require('@google-cloud/pubsub');
 const sharp = require('sharp');
 const fs = require('fs/promises');
 const path = require('path');
+const os = require('os');
+const { put } = require('@vercel/blob');
 
-const storage = new Storage({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
-const bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
-const pubsub = new PubSub({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
+const pubsub = new PubSub({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+});
+
 const subscription = pubsub.subscription(process.env.PUBSUB_SUBSCRIPTION);
 
 const sizes = {
@@ -16,37 +18,61 @@ const sizes = {
   large: 1280,
 };
 
-async function resizeAndUpload(tempFile, originalPath) {
-  const segments = originalPath.split('/');
-  const baseDir = segments.slice(0, 2).join('/'); // "item/12345"
-  const filename = segments[segments.length - 1];
+async function downloadFromBlob(url, localPath) {
+  const response = await fetch(url);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fs.writeFile(localPath, buffer);
+}
 
+async function resizeAndUpload(localTemp, filePath) {
+  const segments = filePath.split('/');
+  const baseDir = segments.slice(0, 2).join('/'); // item/123
+  const filename = segments[segments.length - 1];
 
   for (const [size, width] of Object.entries(sizes)) {
     const directory = `${baseDir}/${size}`;
-    const resizedBuffer = await sharp(tempFile).resize({ width }).toBuffer();
     const destinationPath = `${directory}/${filename}`;
-    await bucket.file(destinationPath).save(resizedBuffer, {
+
+    const resizedBuffer = await sharp(localTemp)
+      .resize({ width })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    await put(destinationPath, resizedBuffer, {
+      access: 'public',
       contentType: 'image/jpeg',
-      resumable: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
+
     console.log(`✅ Uploaded: ${destinationPath}`);
   }
 }
 
 subscription.on('message', async (message) => {
-  const { filePath } = JSON.parse(message.data.toString());
-  const localTemp = `/tmp/${path.basename(filePath)}`;
+  const { filePath } = message.json;
+
+  console.log(`📩 Received message for: ${filePath}`);
+
+  const filename = path.basename(filePath);
+  const localTemp = path.join(os.tmpdir(), filename);
 
   try {
-    await bucket.file(filePath).download({ destination: localTemp });
-    console.log(`📥 Downloaded: ${filePath}`);
+    // Blob public URL format:
+    const blobUrl = `${process.env.BLOB_BASE_URL}/${filePath}`;
+
+    console.log(`📥 Downloading from: ${blobUrl}`);
+
+    await downloadFromBlob(blobUrl, localTemp);
 
     await resizeAndUpload(localTemp, filePath);
+
     await fs.unlink(localTemp);
+
     message.ack();
+    console.log('✅ Message acknowledged');
   } catch (err) {
-    console.error('❌ Error processing message:', err);
+    console.error('❌ Processing failed:', err);
+    // Do NOT ack → PubSub will retry
   }
 });
 

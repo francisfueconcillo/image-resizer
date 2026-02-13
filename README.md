@@ -5,4 +5,6 @@ A background worker that resizes images from Firebase Cloud Storage.
 
 ## Setup
 - Create PubSub topic and subscription
-- `gcloud pubsub topics create image-resizer-topic --project <project-id>`
+- `gcloud pubsub subscriptions create image-resizer-sub \
+  --topic=ibentamo-new-images \
+  --project=<project-id>`

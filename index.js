@@ -49,7 +49,8 @@ async function resizeAndUpload(localTemp, filePath) {
 }
 
 subscription.on('message', async (message) => {
-  const { filePath } = message.json;
+  const payload = JSON.parse(message.data.toString());
+  const { filePath } = payload;
 
   console.log(`📩 Received message for: ${filePath}`);
 
